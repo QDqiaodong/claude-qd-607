@@ -1,0 +1,118 @@
+import axios from 'axios'
+import { ElMessage } from 'element-plus'
+
+/**
+ * 统一走 nginx 反代到后端 /api：
+ *   成功 → 后端包成 { ok:true, message, data }，这里直接把 data 交给页面
+ *   失败 → 后端包成 { ok:false, message:"中文业务提示" }，这里统一弹提示并 reject
+ */
+const http = axios.create({ baseURL: '/api', timeout: 15000 })
+
+http.interceptors.response.use(
+  (res) => {
+    const body = res.data
+    if (body && typeof body === 'object' && Object.prototype.hasOwnProperty.call(body, 'ok')) {
+      if (body.ok) return body.data
+      ElMessage.error(body.message || '操作失败')
+      return Promise.reject(new Error(body.message || '操作失败'))
+    }
+    return body
+  },
+  (err) => {
+    const body = err.response && err.response.data
+    const message = (body && body.message) || err.message || '网络异常，请稍后再试'
+    ElMessage.error(message)
+    return Promise.reject(new Error(message))
+  }
+)
+
+/** 模块一：机房与机柜 + 机架 U 位图 */
+export const cabinetApi = {
+  rooms: () => http.get('/rooms'),
+  createRoom: (data) => http.post('/rooms', data),
+  cabinets: (roomId) => http.get('/cabinets', { params: roomId ? { roomId } : {} }),
+  createCabinet: (data) => http.post('/cabinets', data),
+  /** 机架图：42U 画到 1U */
+  rack: (id) => http.get(`/cabinets/${id}/rack`)
+}
+
+/** 模块二：服务器资产（多条件筛选走 Query by Example） */
+export const serverApi = {
+  search: (params) => http.get('/servers', { params }),
+  get: (id) => http.get(`/servers/${id}`),
+  create: (data) => http.post('/servers', data),
+  update: (id, data) => http.put(`/servers/${id}`, data),
+  setStatus: (id, status) => http.post(`/servers/${id}/status`, { status }),
+  options: () => http.get('/servers/options')
+}
+
+/** 模块三：上架 / 下架 / 迁移工单 */
+export const orderApi = {
+  search: (params) => http.get('/orders', { params }),
+  create: (data) => http.post('/orders', data),
+  advance: (id) => http.post(`/orders/${id}/advance`),
+  reject: (id, reason) => http.post(`/orders/${id}/reject`, { reason }),
+  byServer: (id) => http.get(`/servers/${id}/orders`)
+}
+
+/** 模块四：巡检记录 */
+export const inspectApi = {
+  search: (params) => http.get('/inspections', { params }),
+  summary: () => http.get('/inspections/summary'),
+  create: (data) => http.post('/inspections', data),
+  handle: (id, note) => http.post(`/inspections/${id}/handle`, { note })
+}
+
+/** 模块五：能耗记录 */
+export const energyApi = {
+  search: (params) => http.get('/energy', { params }),
+  summary: (month) => http.get('/energy/summary', { params: month ? { month } : {} }),
+  create: (data) => http.post('/energy', data)
+}
+
+/** 状态 → 中文名 */
+export const SERVER_STATUS = {
+  ONLINE: '在架',
+  OFFLINE: '下架',
+  REPAIR: '维修',
+  SCRAP: '报废'
+}
+
+export const ORDER_TYPE = { ON: '上架', OFF: '下架', MOVE: '迁移' }
+
+export const ORDER_STATUS = {
+  PENDING: '待审批',
+  APPROVED: '已批复',
+  WORKING: '施工中',
+  DONE: '已完成',
+  REJECTED: '已驳回'
+}
+
+export const POWER_STATUS = { NORMAL: '正常', ABNORMAL: '异常' }
+
+/** 状态标签类型（Element Plus tag） */
+export const statusTagType = (status) =>
+  ({
+    ONLINE: 'primary',
+    OFFLINE: 'info',
+    REPAIR: 'warning',
+    SCRAP: 'danger',
+    PENDING: 'info',
+    APPROVED: 'primary',
+    WORKING: 'warning',
+    DONE: 'success',
+    REJECTED: 'danger',
+    NORMAL: 'success',
+    ABNORMAL: 'danger'
+  })[status] || 'info'
+
+/** 后端 LocalDateTime 出来是 "2026-09-21T09:10:00"，页面上显示到分钟 */
+export const fmtTime = (value) => (value ? String(value).replace('T', ' ').slice(0, 16) : '—')
+
+/** 当前月 yyyy-MM */
+export const currentMonth = () => {
+  const now = new Date()
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+}
+
+export default http
