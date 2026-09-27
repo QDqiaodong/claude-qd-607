@@ -12,11 +12,13 @@ import org.springframework.stereotype.Service;
 
 import com.idc.center.common.BizException;
 import com.idc.center.domain.Cabinet;
+import com.idc.center.domain.Isolation;
 import com.idc.center.domain.ServerAsset;
 import com.idc.center.domain.WorkOrder;
 import com.idc.center.dto.Dtos;
 import com.idc.center.dto.Views;
 import com.idc.center.repository.CabinetRepository;
+import com.idc.center.repository.IsolationRepository;
 import com.idc.center.repository.ServerAssetRepository;
 import com.idc.center.repository.WorkOrderRepository;
 
@@ -31,13 +33,16 @@ public class OrderService {
     private final WorkOrderRepository orderRepository;
     private final ServerAssetRepository serverRepository;
     private final CabinetRepository cabinetRepository;
+    private final IsolationRepository isolationRepository;
 
     public OrderService(WorkOrderRepository orderRepository,
                         ServerAssetRepository serverRepository,
-                        CabinetRepository cabinetRepository) {
+                        CabinetRepository cabinetRepository,
+                        IsolationRepository isolationRepository) {
         this.orderRepository = orderRepository;
         this.serverRepository = serverRepository;
         this.cabinetRepository = cabinetRepository;
+        this.isolationRepository = isolationRepository;
     }
 
     /**
@@ -108,6 +113,7 @@ public class OrderService {
         if (next == null) {
             throw new BizException("工单已处于终态（" + IdcRule.orderStatusName(order.getStatus()) + "），不能再推进");
         }
+        checkIsolation(order);
         if ("APPROVED".equals(next)) {
             order.setApprover("值班主管");
         }
@@ -120,6 +126,24 @@ public class OrderService {
             order.setFinishTime(LocalDateTime.now());
         }
         return orderRepository.save(order);
+    }
+
+    /**
+     * 机柜停电检修隔离：上架 / 迁移工单在目标机柜隔离期间不得推进（后端强制，前端禁用只是提示）。
+     * 隔离解除后这里自然放行；U 位冲突等其他业务规则不受影响，仍按原逻辑校验。
+     */
+    private void checkIsolation(WorkOrder order) {
+        if (!"ON".equals(order.getOrderType()) && !"MOVE".equals(order.getOrderType())) {
+            return;
+        }
+        if (order.getCabinetId() == null) {
+            return;
+        }
+        Isolation active = isolationRepository.findByActiveCabinet(order.getCabinetId()).orElse(null);
+        if (active != null) {
+            throw new BizException("目标机柜正在停电检修隔离中（" + active.getIsolationNo() + "："
+                    + active.getReason() + "），隔离解除前该工单不能推进");
+        }
     }
 
     public WorkOrder reject(Long id, Dtos.RejectReq req) {

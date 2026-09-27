@@ -31,6 +31,20 @@
           机柜立面
           <span class="qbe-badge">{{ rack.cabinetCode }} · {{ rack.usedU }}U 已用 / {{ rack.freeU }}U 空闲</span>
         </div>
+        <el-alert
+          v-if="isolation"
+          type="error"
+          :closable="false"
+          show-icon
+          class="iso-banner"
+          @click="goIsolation"
+        >
+          <template #title>
+            该机柜正处于停电检修隔离中：{{ isolation.reason }}
+            （负责人 {{ isolation.manager }}，计划 {{ fmtTime(isolation.planStart) }} ~ {{ fmtTime(isolation.planEnd) }}）
+            <span class="iso-link">查看隔离单 {{ isolation.isolationNo }} →</span>
+          </template>
+        </el-alert>
         <div class="rack-scroll">
           <div class="rack-grid" :style="{ gridTemplateRows: `repeat(${rack.totalU}, 22px)` }">
             <el-tooltip
@@ -205,7 +219,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { cabinetApi, orderApi, SERVER_STATUS, serverApi } from '../api'
+import { cabinetApi, fmtTime, isolationApi, orderApi, SERVER_STATUS, serverApi } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -214,6 +228,7 @@ const cabinetId = ref(Number(route.params.cabinetId || 1))
 const rack = ref({ slots: [], totalU: 42, usedU: 0, freeU: 42 })
 const cabinets = ref([])
 const servers = ref([])
+const isolation = ref(null)
 
 const drawer = ref(false)
 const current = ref(null)
@@ -331,6 +346,13 @@ async function changeStatus(status) {
 
 async function loadRack() {
   rack.value = await cabinetApi.rack(cabinetId.value)
+  isolation.value = await isolationApi.currentByCabinet(cabinetId.value)
+}
+
+function goIsolation() {
+  if (isolation.value) {
+    router.push({ path: `/isolations/${isolation.value.id}` })
+  }
 }
 
 async function loadServers() {
@@ -359,6 +381,17 @@ onMounted(async () => {
   grid-template-columns: minmax(420px, 1fr) 320px;
   gap: 14px;
   align-items: start;
+}
+
+.iso-banner {
+  margin-bottom: 10px;
+  cursor: pointer;
+}
+
+.iso-link {
+  margin-left: 8px;
+  font-weight: 600;
+  text-decoration: underline;
 }
 
 .rack-scroll {

@@ -57,9 +57,12 @@
         <el-table-column label="申请时间" width="140">
           <template #default="{ row }">{{ fmtTime(row.applyTime) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="130">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ ORDER_STATUS[row.status] }}</el-tag>
+            <el-tooltip v-if="frozenIsolation(row)" content="目标机柜停电检修隔离中，解除前不能推进" placement="top">
+              <el-tag type="danger" size="small" effect="plain" style="margin-left: 4px">隔离冻结</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="审批 / 施工" width="140">
@@ -74,15 +77,24 @@
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button
-              v-if="row.status !== 'DONE' && row.status !== 'REJECTED'"
-              link
-              type="primary"
-              size="small"
-              @click="advance(row)"
+            <el-tooltip
+              :disabled="!frozenIsolation(row)"
+              :content="frozenIsolation(row) ? `机柜隔离中（${frozenIsolation(row).isolationNo}），解除前不能推进` : ''"
+              placement="top"
             >
-              推进
-            </el-button>
+              <span>
+                <el-button
+                  v-if="row.status !== 'DONE' && row.status !== 'REJECTED'"
+                  link
+                  type="primary"
+                  size="small"
+                  :disabled="!!frozenIsolation(row)"
+                  @click="advance(row)"
+                >
+                  推进
+                </el-button>
+              </span>
+            </el-tooltip>
             <el-button
               v-if="row.status === 'PENDING' || row.status === 'APPROVED'"
               link
@@ -170,6 +182,7 @@ import {
   SERVER_STATUS,
   cabinetApi,
   fmtTime,
+  isolationApi,
   orderApi,
   serverApi,
   statusTagType
@@ -180,6 +193,7 @@ const total = ref(0)
 const cabinets = ref([])
 const servers = ref([])
 const counter = ref({})
+const activeIsolations = ref([])
 
 const query = reactive({ status: '', orderType: '', orderNo: '', applicant: '', page: 1, size: 10 })
 
@@ -213,6 +227,12 @@ const cabinetName = (id) => {
 const serverName = (id) => {
   const hit = servers.value.find((item) => item.id === id)
   return hit ? `${hit.brand} ${hit.model}` : ''
+}
+
+/** 上架 / 迁移工单的目标机柜若在隔离中，前端禁用推进（后端同样强制拦截） */
+const frozenIsolation = (row) => {
+  if (row.orderType !== 'ON' && row.orderType !== 'MOVE') return null
+  return activeIsolations.value.find((iso) => iso.cabinetId === row.cabinetId) || null
 }
 
 async function reload() {
@@ -296,6 +316,7 @@ onMounted(async () => {
   cabinets.value = await cabinetApi.cabinets()
   const page = await serverApi.search({ size: 200 })
   servers.value = page.content
+  activeIsolations.value = await isolationApi.activeList()
   await reload()
   await loadCounter()
 })

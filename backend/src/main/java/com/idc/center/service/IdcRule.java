@@ -32,6 +32,12 @@ public final class IdcRule {
             "DONE", "已完成",
             "REJECTED", "已驳回");
 
+    public static final Map<String, String> ISOLATION_STATUS = Map.of(
+            "PENDING", "待生效",
+            "ACTIVE", "隔离中",
+            "RELEASED", "已解除",
+            "CANCELED", "已取消");
+
     public static final Map<String, String> POWER_STATUS = Map.of(
             "NORMAL", "正常",
             "ABNORMAL", "异常");
@@ -90,6 +96,19 @@ public final class IdcRule {
     /** 只有待审批、已批复可以被驳回 */
     public static boolean canReject(String status) {
         return "PENDING".equals(status) || "APPROVED".equals(status);
+    }
+
+    public static boolean isValidIsolationStatus(String status) {
+        return status != null && ISOLATION_STATUS.containsKey(status);
+    }
+
+    public static String isolationStatusName(String status) {
+        return status == null ? "" : ISOLATION_STATUS.getOrDefault(status, status);
+    }
+
+    /** 隔离快照只固定「在架 / 维修中」的服务器（下架、报废不进影响清单） */
+    public static boolean inIsolationScope(String status) {
+        return "ONLINE".equals(status) || "REPAIR".equals(status);
     }
 
     public static boolean isPowerAbnormal(String powerStatus) {

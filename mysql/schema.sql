@@ -23,6 +23,10 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS idc_isolation_event;
+DROP TABLE IF EXISTS idc_isolation_order;
+DROP TABLE IF EXISTS idc_isolation_server;
+DROP TABLE IF EXISTS idc_isolation;
 DROP TABLE IF EXISTS idc_energy;
 DROP TABLE IF EXISTS idc_inspection;
 DROP TABLE IF EXISTS idc_work_order;
@@ -136,6 +140,82 @@ CREATE TABLE idc_energy (
     KEY idx_energy_cabinet (cabinet_id),
     KEY idx_energy_date (meter_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='能耗记录';
+
+-- ============================================================================
+-- 模块六：机柜停电检修隔离
+--   idc_isolation         隔离主记录（待生效 → 隔离中 → 已解除 / 已取消）
+--   idc_isolation_server  生效那一刻固定的受影响服务器快照（在架 / 维修中）
+--   idc_isolation_order   生效那一刻被冻结的上架 / 迁移施工快照
+--   idc_isolation_event   操作留痕（创建 / 生效 / 生效失败 / 取消 / 解除）
+-- ============================================================================
+
+CREATE TABLE idc_isolation (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_no     VARCHAR(30)  NOT NULL COMMENT '隔离单号',
+    cabinet_id       BIGINT       NOT NULL COMMENT '隔离机柜',
+    plan_start       DATETIME     NOT NULL COMMENT '计划开始时间',
+    plan_end         DATETIME     NOT NULL COMMENT '计划结束时间',
+    reason           VARCHAR(300) NOT NULL COMMENT '检修原因',
+    initiator        VARCHAR(30)  NOT NULL COMMENT '发起人',
+    manager          VARCHAR(30)  NOT NULL COMMENT '现场负责人',
+    status           VARCHAR(20)  NOT NULL COMMENT 'PENDING 待生效 / ACTIVE 隔离中 / RELEASED 已解除 / CANCELED 已取消',
+    active_cabinet   BIGINT                COMMENT '仅隔离中 = 机柜ID，唯一索引保证同机柜任一时刻只有一条隔离中',
+    created_at       DATETIME              COMMENT '创建时间',
+    activated_at     DATETIME              COMMENT '生效时间',
+    released_at      DATETIME              COMMENT '解除时间',
+    release_operator VARCHAR(30)           COMMENT '解除操作人（须为现场负责人）',
+    release_note     VARCHAR(300)          COMMENT '解除说明',
+    canceled_at      DATETIME              COMMENT '取消时间',
+    cancel_operator  VARCHAR(30)           COMMENT '取消操作人',
+    cancel_reason    VARCHAR(300)          COMMENT '取消原因',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_isolation_no (isolation_no),
+    UNIQUE KEY uk_isolation_active (active_cabinet),
+    KEY idx_isolation_cabinet (cabinet_id),
+    KEY idx_isolation_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='机柜停电检修隔离';
+
+CREATE TABLE idc_isolation_server (
+    id           BIGINT      NOT NULL AUTO_INCREMENT,
+    isolation_id BIGINT      NOT NULL COMMENT '隔离记录',
+    server_id    BIGINT      NOT NULL COMMENT '服务器',
+    asset_no     VARCHAR(30)           COMMENT '资产编号快照',
+    brand        VARCHAR(30)           COMMENT '品牌快照',
+    model        VARCHAR(40)           COMMENT '型号快照',
+    start_u      INT                   COMMENT '起始 U 位快照',
+    size_u       INT                   COMMENT '占用 U 数快照',
+    owner_name   VARCHAR(50)           COMMENT '业务归属快照',
+    status       VARCHAR(20)           COMMENT '生效时状态快照（ONLINE 在架 / REPAIR 维修）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_iso_server (isolation_id, server_id),
+    KEY idx_iso_server_iso (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离影响服务器快照';
+
+CREATE TABLE idc_isolation_order (
+    id               BIGINT      NOT NULL AUTO_INCREMENT,
+    isolation_id     BIGINT      NOT NULL COMMENT '隔离记录',
+    order_id         BIGINT      NOT NULL COMMENT '工单',
+    order_no         VARCHAR(30)           COMMENT '工单号快照',
+    order_type       VARCHAR(20)           COMMENT '工单类型快照（ON 上架 / MOVE 迁移）',
+    asset_no         VARCHAR(30)           COMMENT '资产编号快照',
+    target_u         INT                   COMMENT '目标 U 位快照',
+    applicant        VARCHAR(30)           COMMENT '申请人快照',
+    status_at_freeze VARCHAR(20)           COMMENT '冻结时状态（PENDING 待审批 / APPROVED 已批复）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_iso_order (isolation_id, order_id),
+    KEY idx_iso_order_iso (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离冻结施工快照';
+
+CREATE TABLE idc_isolation_event (
+    id           BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_id BIGINT       NOT NULL COMMENT '隔离记录',
+    action       VARCHAR(20)  NOT NULL COMMENT 'CREATE 创建 / ACTIVATE 生效 / ACTIVATE_FAIL 生效失败 / CANCEL 取消 / RELEASE 解除',
+    operator     VARCHAR(30)           COMMENT '操作人',
+    detail       VARCHAR(500)          COMMENT '操作说明',
+    created_at   DATETIME              COMMENT '操作时间',
+    PRIMARY KEY (id),
+    KEY idx_iso_event (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离操作记录';
 
 
 -- ---------------------------- 机房 ----------------------------
@@ -334,5 +414,32 @@ INSERT INTO idc_energy (id, cabinet_id, meter_date, meter_reading, usage_kwh, un
     (34, 12, '2026-07-31', 2960.00, 0.00, 0.68, 0.00, '刘岩', '首期建账，无上期读数'),
     (35, 12, '2026-08-31', 3092.00, 132.00, 0.68, 89.76, '刘岩', '2026-08 月度抄表'),
     (36, 12, '2026-09-20', 3224.00, 132.00, 0.68, 89.76, '刘岩', '2026-09 月度抄表');
+
+-- ---------------------------- 停电检修隔离 ----------------------------
+-- 历史已解除：B01 柜 UPS 电池组更换（生效时固定 3 台在架服务器，冻结 1 张迁移工单）
+INSERT INTO idc_isolation (id, isolation_no, cabinet_id, plan_start, plan_end, reason, initiator, manager,
+                           status, active_cabinet, created_at, activated_at, released_at,
+                           release_operator, release_note, canceled_at, cancel_operator, cancel_reason) VALUES
+    (1, 'ISO20260915001', 4, '2026-09-16 08:00:00', '2026-09-16 12:00:00',
+     'B01 柜 UPS 电池组更换，需全柜断电检修', '马涛', '马涛',
+     'RELEASED', NULL, '2026-09-15 17:30:00', '2026-09-16 08:05:00', '2026-09-16 11:42:00',
+     '马涛', '电池组更换完成，双路供电恢复正常，巡检复核无异常', NULL, NULL, NULL),
+    (2, 'ISO20260926001', 12, '2026-09-27 09:00:00', '2026-09-27 18:00:00',
+     'D03 柜 PDU 整体更换，需全柜断电', '陈锋', '陈锋',
+     'PENDING', NULL, '2026-09-26 16:00:00', NULL, NULL, NULL, NULL, NULL, NULL, NULL);
+
+INSERT INTO idc_isolation_server (id, isolation_id, server_id, asset_no, brand, model, start_u, size_u, owner_name, status) VALUES
+    (1, 1, 14, 'SRV-0014', '华为', 'TaiShan 2280', 1, 2, '国产化试点', 'ONLINE'),
+    (2, 1, 15, 'SRV-0015', '华为', 'TaiShan 2280', 4, 2, '国产化试点', 'ONLINE'),
+    (3, 1, 16, 'SRV-0016', '戴尔', 'PowerEdge R750xs', 8, 1, '数仓计算', 'ONLINE');
+
+INSERT INTO idc_isolation_order (id, isolation_id, order_id, order_no, order_type, asset_no, target_u, applicant, status_at_freeze) VALUES
+    (1, 1, 10, 'WO20260915010', 'MOVE', 'SRV-0016', 20, '陈锋', 'PENDING');
+
+INSERT INTO idc_isolation_event (id, isolation_id, action, operator, detail, created_at) VALUES
+    (1, 1, 'CREATE', '马涛', '创建隔离记录，计划 2026-09-16 08:00 ~ 2026-09-16 12:00 断电检修', '2026-09-15 17:30:00'),
+    (2, 1, 'ACTIVATE', '马涛', '隔离生效，固定受影响服务器 3 台，冻结施工工单 1 张', '2026-09-16 08:05:00'),
+    (3, 1, 'RELEASE', '马涛', '解除隔离：电池组更换完成，双路供电恢复正常，巡检复核无异常；相关施工恢复正常推进', '2026-09-16 11:42:00'),
+    (4, 2, 'CREATE', '陈锋', '创建隔离记录，计划 2026-09-27 09:00 ~ 2026-09-27 18:00 断电检修', '2026-09-26 16:00:00');
 
 SET FOREIGN_KEY_CHECKS = 1;

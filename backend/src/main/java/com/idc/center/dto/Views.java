@@ -1,9 +1,12 @@
 package com.idc.center.dto;
 
 import java.math.BigDecimal;
+import java.time.LocalDateTime;
 import java.util.List;
 
 import com.idc.center.domain.Cabinet;
+import com.idc.center.domain.Isolation;
+import com.idc.center.domain.IsolationEvent;
 import com.idc.center.domain.ServerAsset;
 
 import lombok.Data;
@@ -170,5 +173,117 @@ public final class Views {
             result.setSize(size);
             return result;
         }
+    }
+
+    /** 隔离台账行：主记录 + 机柜信息 + 影响范围计数 */
+    @Data
+    public static class IsolationView {
+        private Long id;
+        private String isolationNo;
+        private Long cabinetId;
+        private String cabinetCode;
+        private String cabinetName;
+        private String roomName;
+        private LocalDateTime planStart;
+        private LocalDateTime planEnd;
+        private String reason;
+        private String initiator;
+        private String manager;
+        private String status;
+        private LocalDateTime createdAt;
+        private LocalDateTime activatedAt;
+        private LocalDateTime releasedAt;
+        /** 快照固定的受影响服务器台数 */
+        private Integer serverCount;
+        /** 冻结的施工工单张数 */
+        private Integer frozenCount;
+
+        public static IsolationView of(Isolation iso, Cabinet cabinet, String roomName,
+                                       int serverCount, int frozenCount) {
+            IsolationView view = new IsolationView();
+            view.setId(iso.getId());
+            view.setIsolationNo(iso.getIsolationNo());
+            view.setCabinetId(iso.getCabinetId());
+            view.setCabinetCode(cabinet == null ? "" : cabinet.getCode());
+            view.setCabinetName(cabinet == null ? "" : cabinet.getName());
+            view.setRoomName(roomName == null ? "" : roomName);
+            view.setPlanStart(iso.getPlanStart());
+            view.setPlanEnd(iso.getPlanEnd());
+            view.setReason(iso.getReason());
+            view.setInitiator(iso.getInitiator());
+            view.setManager(iso.getManager());
+            view.setStatus(iso.getStatus());
+            view.setCreatedAt(iso.getCreatedAt());
+            view.setActivatedAt(iso.getActivatedAt());
+            view.setReleasedAt(iso.getReleasedAt());
+            view.setServerCount(serverCount);
+            view.setFrozenCount(frozenCount);
+            return view;
+        }
+    }
+
+    /** 快照服务器 vs 当前资产：差异逐台列出，历史快照不被实时数据覆盖 */
+    @Data
+    public static class ServerDiff {
+        private Long serverId;
+        private String assetNo;
+        private String brand;
+        private String model;
+        /** 快照：生效时的 U 位 / 归属 / 状态 */
+        private Integer snapStartU;
+        private Integer snapSizeU;
+        private String snapOwnerName;
+        private String snapStatus;
+        /** 当前：实时资产状态（已删除则为空） */
+        private Long currentCabinetId;
+        private Integer currentStartU;
+        private Integer currentSizeU;
+        private String currentOwnerName;
+        private String currentStatus;
+        /** SAME 一致 / CHANGED 有变化 / MOVED_OUT 已移出本柜 / GONE 资产已删除 / ADDED 隔离后新进入本柜 */
+        private String diffType;
+    }
+
+    /** 冻结施工快照 vs 工单当前状态 */
+    @Data
+    public static class OrderDiff {
+        private Long orderId;
+        private String orderNo;
+        private String orderType;
+        private String assetNo;
+        private Integer targetU;
+        private String applicant;
+        /** 冻结时状态（快照） */
+        private String statusAtFreeze;
+        /** 工单当前状态（实时，已删除则为空） */
+        private String currentStatus;
+    }
+
+    /** 冲突施工：机柜相关且已进入施工中的工单（实时查询，用于阻止生效） */
+    @Data
+    public static class ConflictOrder {
+        private Long orderId;
+        private String orderNo;
+        private String orderType;
+        private String assetNo;
+        private String applicant;
+        private String status;
+    }
+
+    /** 隔离详情：计划信息 + 快照 + 当前差异 + 冲突施工 + 操作记录 */
+    @Data
+    public static class IsolationDetail {
+        private Isolation isolation;
+        private String cabinetCode;
+        private String cabinetName;
+        private String roomName;
+        /** 快照服务器与当前的逐台差异（含隔离后新进入本柜的） */
+        private List<ServerDiff> serverDiffs;
+        /** 冻结施工快照与工单当前状态 */
+        private List<OrderDiff> frozenOrders;
+        /** 当前施工中工单（实时） */
+        private List<ConflictOrder> conflicts;
+        /** 操作留痕 */
+        private List<IsolationEvent> events;
     }
 }
