@@ -7,6 +7,15 @@
       </div>
     </div>
 
+    <el-alert
+      v-if="activeIsolations.length"
+      class="freeze-banner"
+      type="error"
+      :closable="false"
+      show-icon
+      :title="freezeBannerText"
+    />
+
     <div class="stat-grid">
       <div v-for="card in statusCards" :key="card.code" class="stat-card" :class="card.cls">
         <div class="stat-label">{{ card.label }}</div>
@@ -57,9 +66,17 @@
         <el-table-column label="申请时间" width="140">
           <template #default="{ row }">{{ fmtTime(row.applyTime) }}</template>
         </el-table-column>
-        <el-table-column label="状态" width="90">
+        <el-table-column label="状态" width="120">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ ORDER_STATUS[row.status] }}</el-tag>
+            <el-tooltip
+              v-if="frozenMap[row.id]"
+              :content="frozenMap[row.id]"
+              placement="top"
+              effect="dark"
+            >
+              <el-tag size="small" type="danger" effect="plain" style="margin-left: 4px">已冻结</el-tag>
+            </el-tooltip>
           </template>
         </el-table-column>
         <el-table-column label="审批 / 施工" width="140">
@@ -170,6 +187,7 @@ import {
   SERVER_STATUS,
   cabinetApi,
   fmtTime,
+  isolationApi,
   orderApi,
   serverApi,
   statusTagType
@@ -180,6 +198,7 @@ const total = ref(0)
 const cabinets = ref([])
 const servers = ref([])
 const counter = ref({})
+const activeIsolations = ref([])
 
 const query = reactive({ status: '', orderType: '', orderNo: '', applicant: '', page: 1, size: 10 })
 
@@ -209,6 +228,32 @@ const cabinetName = (id) => {
   const hit = cabinets.value.find((item) => item.id === id)
   return hit ? hit.code : '—'
 }
+
+/** 当前隔离中的机柜集合：目标柜命中的 PENDING/APPROVED 工单显示「已冻结」（后端推进同样硬拦） */
+const frozenMap = computed(() => {
+  const serverCabinet = new Map()
+  servers.value.forEach((s) => serverCabinet.set(s.id, s.cabinetId))
+  const map = {}
+  rows.value.forEach((row) => {
+    if (row.status !== 'PENDING' && row.status !== 'APPROVED') return
+    const hit = activeIsolations.value.find((iso) => {
+      if (iso.cabinetId === row.cabinetId) return true
+      // 下架/迁移：服务器此刻实际所在柜被隔离也算
+      return (row.orderType === 'OFF' || row.orderType === 'MOVE')
+        && serverCabinet.get(row.serverId) === iso.cabinetId
+    })
+    if (hit) {
+      map[row.id] = `机柜 ${hit.cabinetCode} 正在停电检修隔离（${hit.isolationNo}），解除前不得推进`
+    }
+  })
+  return map
+})
+
+const freezeBannerText = computed(() =>
+  `当前有 ${activeIsolations.value.length} 个机柜正在停电隔离：`
+  + activeIsolations.value.map((i) => `${i.cabinetCode}（${i.isolationNo}）`).join('、')
+  + '；相关待审批/已批复工单已冻结，解除隔离后自动恢复。'
+)
 
 const serverName = (id) => {
   const hit = servers.value.find((item) => item.id === id)
@@ -249,6 +294,7 @@ async function advance(row) {
   })
   await orderApi.advance(row.id)
   ElMessage.success(`${row.orderNo} 已推进到「${next}」`)
+  activeIsolations.value = await isolationApi.list({ status: 'ISOLATING' })
   reload()
   loadCounter()
 }
@@ -296,12 +342,17 @@ onMounted(async () => {
   cabinets.value = await cabinetApi.cabinets()
   const page = await serverApi.search({ size: 200 })
   servers.value = page.content
+  activeIsolations.value = await isolationApi.list({ status: 'ISOLATING' })
   await reload()
   await loadCounter()
 })
 </script>
 
 <style scoped>
+.freeze-banner {
+  margin-bottom: 12px;
+}
+
 .filter-bar {
   display: flex;
   align-items: center;

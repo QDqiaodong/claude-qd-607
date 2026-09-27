@@ -201,4 +201,57 @@ public final class Dtos {
         private int page = 0;
         private int size = 10;
     }
+
+    /** 新建机柜停电检修隔离单 */
+    @Data
+    public static class IsolationCreateReq {
+        @NotNull(message = "请选择要隔离的机柜")
+        private Long cabinetId;
+        @NotNull(message = "请选择计划开始时间")
+        private LocalDateTime planStart;
+        @NotNull(message = "请选择计划结束时间")
+        private LocalDateTime planEnd;
+        @NotBlank(message = "请填写检修原因")
+        private String reason;
+        @NotBlank(message = "请填写发起人")
+        private String initiator;
+        @NotBlank(message = "请填写现场负责人")
+        private String siteOwner;
+        private String remark;
+    }
+
+    /** 解除隔离：现场负责人必填解除说明 */
+    @Data
+    public static class IsolationReleaseReq {
+        @NotBlank(message = "请填写解除说明")
+        private String note;
+        @NotBlank(message = "缺少解除操作人")
+        private String operator;
+    }
+
+    /** 取消待生效隔离 */
+    @Data
+    public static class IsolationCancelReq {
+        @NotBlank(message = "请填写取消原因")
+        private String reason;
+        @NotBlank(message = "缺少取消操作人")
+        private String operator;
+    }
+
+    /** 生效隔离（操作人用于操作记录） */
+    @Data
+    public static class IsolationEffectReq {
+        @NotBlank(message = "缺少生效操作人")
+        private String operator;
+    }
+
+    /** 隔离台账查询条件 */
+    @Data
+    public static class IsolationQuery {
+        private Long cabinetId;
+        private String status;
+        private String isolationNo;
+        private int page = 0;
+        private int size = 10;
+    }
 }

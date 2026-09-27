@@ -16,13 +16,37 @@
               v-for="item in group.items"
               :key="item.id"
               :value="item.id"
-              :label="`${item.code} · ${item.name}`"
+              :label="`${item.code} · ${item.name}${item.isolating ? '（隔离中）' : ''}`"
             />
           </el-option-group>
         </el-select>
         <el-button size="small" @click="loadAll">刷新</el-button>
       </div>
     </div>
+
+    <!-- 正在隔离横幅：原因 + 负责人 + 直达隔离详情 -->
+    <el-alert
+      v-if="rack.activeIsolation"
+      class="iso-alert"
+      type="error"
+      :closable="false"
+      show-icon
+    >
+      <template #title>
+        <div class="iso-banner">
+          <el-tag type="danger" effect="dark" size="small">隔离中</el-tag>
+          <b>{{ rack.activeIsolation.isolationNo }}</b>
+          <span>该机柜正在停电检修隔离，相关上架/迁移施工已冻结</span>
+          <span class="muted">现场负责人：{{ rack.activeIsolation.siteOwner }}</span>
+          <el-button link type="primary" size="small" @click="goIsolation(rack.activeIsolation.isolationId)">
+            查看隔离详情 →
+          </el-button>
+        </div>
+        <div class="iso-reason">隔离原因：{{ rack.activeIsolation.reason }}
+          ｜计划 {{ fmtTime(rack.activeIsolation.planStart) }} ~ {{ fmtTime(rack.activeIsolation.planEnd) }}
+        </div>
+      </template>
+    </el-alert>
 
     <div class="rack-layout">
       <!-- 机架 U 位网格：从 42U 画到 1U -->
@@ -205,7 +229,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { cabinetApi, orderApi, SERVER_STATUS, serverApi } from '../api'
+import { cabinetApi, fmtTime, orderApi, SERVER_STATUS, serverApi } from '../api'
 
 const route = useRoute()
 const router = useRouter()
@@ -257,6 +281,10 @@ const selectableServers = computed(() =>
 )
 
 const statusName = (status) => SERVER_STATUS[status] || status
+
+function goIsolation(id) {
+  router.push(`/isolations/${id}`)
+}
 
 /** 顶部 U 位对应第几行：42U 在最上面 */
 const rowOf = (slot) => (rack.value.totalU || 42) - slot.topU + 1
@@ -354,6 +382,28 @@ onMounted(async () => {
 </script>
 
 <style scoped>
+.iso-alert {
+  margin-bottom: 14px;
+}
+
+.iso-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.iso-banner .muted {
+  color: #b71c1c;
+  opacity: 0.75;
+}
+
+.iso-reason {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #b71c1c;
+}
+
 .rack-layout {
   display: grid;
   grid-template-columns: minmax(420px, 1fr) 320px;

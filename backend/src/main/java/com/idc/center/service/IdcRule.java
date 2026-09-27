@@ -36,6 +36,19 @@ public final class IdcRule {
             "NORMAL", "正常",
             "ABNORMAL", "异常");
 
+    /** 隔离单状态：待生效 / 隔离中 / 已解除 / 已取消 */
+    public static final Map<String, String> ISOLATION_STATUS = Map.of(
+            "PENDING", "待生效",
+            "ISOLATING", "隔离中",
+            "RELEASED", "已解除",
+            "CANCELLED", "已取消");
+
+    /** 隔离期会被冻结、不允许继续推进的工单状态 */
+    public static final List<String> FROZEN_ORDER_STATUS = List.of("PENDING", "APPROVED", "WORKING");
+
+    /** 硬冲突：已经进入施工中的工单，遇到隔离生效必须拦下 */
+    public static final String ORDER_WORKING = "WORKING";
+
     /** 温湿度阈值：温度 ≥ 27℃ 或湿度不在 40%~60% 判为异常 */
     public static final BigDecimal TEMP_LIMIT = BigDecimal.valueOf(27);
     public static final BigDecimal HUMIDITY_MIN = BigDecimal.valueOf(40);
@@ -94,6 +107,29 @@ public final class IdcRule {
 
     public static boolean isPowerAbnormal(String powerStatus) {
         return "ABNORMAL".equals(powerStatus);
+    }
+
+    public static boolean isValidIsolationStatus(String status) {
+        return status != null && ISOLATION_STATUS.containsKey(status);
+    }
+
+    public static String isolationStatusName(String status) {
+        return status == null ? "" : ISOLATION_STATUS.getOrDefault(status, status);
+    }
+
+    /** 只有待生效可以取消 */
+    public static boolean canCancelIsolation(String status) {
+        return "PENDING".equals(status);
+    }
+
+    /** 只有隔离中可以解除 */
+    public static boolean canReleaseIsolation(String status) {
+        return "ISOLATING".equals(status);
+    }
+
+    /** 只有待生效可以尝试生效 */
+    public static boolean canEffectIsolation(String status) {
+        return "PENDING".equals(status);
     }
 
     /** 按温湿度与电源状态判定本次巡检是否异常 */

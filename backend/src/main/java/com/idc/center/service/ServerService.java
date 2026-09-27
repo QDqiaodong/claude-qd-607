@@ -23,10 +23,14 @@ public class ServerService {
 
     private final ServerAssetRepository serverRepository;
     private final CabinetRepository cabinetRepository;
+    private final IsolationService isolationService;
 
-    public ServerService(ServerAssetRepository serverRepository, CabinetRepository cabinetRepository) {
+    public ServerService(ServerAssetRepository serverRepository,
+                         CabinetRepository cabinetRepository,
+                         IsolationService isolationService) {
         this.serverRepository = serverRepository;
         this.cabinetRepository = cabinetRepository;
+        this.isolationService = isolationService;
     }
 
     /**
@@ -74,6 +78,7 @@ public class ServerService {
         if (!IdcRule.isValidServerStatus(req.getStatus())) {
             throw new BizException("服务器状态不合法：" + req.getStatus());
         }
+        assertCabinetNotIsolated(req.getCabinetId(), "往正在停电隔离的机柜新增/上架服务器");
         ServerAsset server = new ServerAsset();
         apply(server, req);
         checkPlacement(server, null);
@@ -93,6 +98,11 @@ public class ServerService {
         if (!IdcRule.isValidServerStatus(req.getStatus())) {
             throw new BizException("服务器状态不合法：" + req.getStatus());
         }
+        // 迁出/移入正在隔离的机柜、或改动隔离柜内资产的 U 位，都在禁止之列
+        assertCabinetNotIsolated(server.getCabinetId(), "改动隔离柜内的服务器");
+        if (!java.util.Objects.equals(server.getCabinetId(), req.getCabinetId())) {
+            assertCabinetNotIsolated(req.getCabinetId(), "把服务器迁入正在隔离的机柜");
+        }
         apply(server, req);
         checkPlacement(server, id);
         return serverRepository.save(server);
@@ -107,9 +117,22 @@ public class ServerService {
         if ("SCRAP".equals(server.getStatus()) && !"SCRAP".equals(req.getStatus())) {
             throw new BizException("已报废的服务器不能再变更状态");
         }
+        assertCabinetNotIsolated(server.getCabinetId(), "变更隔离柜内服务器的状态");
         server.setStatus(req.getStatus());
         checkPlacement(server, id);
         return serverRepository.save(server);
+    }
+
+    /** 隔离中的机柜不允许直接改资产（现场施工必须走工单，而工单推进在隔离期已被冻结） */
+    private void assertCabinetNotIsolated(Long cabinetId, String action) {
+        if (cabinetId == null) {
+            return;
+        }
+        Views.ActiveIsolationBanner active = isolationService.activeOfCabinet(cabinetId);
+        if (active != null) {
+            throw new BizException("机柜 " + active.getCabinetCode() + " 正在停电检修隔离（"
+                    + active.getIsolationNo() + "），解除前不允许" + action);
+        }
     }
 
     public ServerAsset get(Long id) {

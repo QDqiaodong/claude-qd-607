@@ -31,13 +31,16 @@ public class OrderService {
     private final WorkOrderRepository orderRepository;
     private final ServerAssetRepository serverRepository;
     private final CabinetRepository cabinetRepository;
+    private final IsolationService isolationService;
 
     public OrderService(WorkOrderRepository orderRepository,
                         ServerAssetRepository serverRepository,
-                        CabinetRepository cabinetRepository) {
+                        CabinetRepository cabinetRepository,
+                        IsolationService isolationService) {
         this.orderRepository = orderRepository;
         this.serverRepository = serverRepository;
         this.cabinetRepository = cabinetRepository;
+        this.isolationService = isolationService;
     }
 
     /**
@@ -107,6 +110,11 @@ public class OrderService {
         String next = IdcRule.nextOrderStatus(order.getStatus());
         if (next == null) {
             throw new BizException("工单已处于终态（" + IdcRule.orderStatusName(order.getStatus()) + "），不能再推进");
+        }
+        // 停电检修隔离的后端硬约束：隔离期间相关机柜的待审批/已批复工单不得推进。
+        // 已在施工中的工单不可能产生于隔离期（隔离生效时会被硬冲突拦下），到 DONE 的收口不受影响。
+        if ("APPROVED".equals(next) || "WORKING".equals(next)) {
+            isolationService.assertOrderNotFrozen(order);
         }
         if ("APPROVED".equals(next)) {
             order.setApprover("值班主管");

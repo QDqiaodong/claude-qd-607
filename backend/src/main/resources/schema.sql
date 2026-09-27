@@ -8,6 +8,10 @@
 --   3. idc_work_order           上架 / 下架 / 迁移工单（待审批→已批复→施工中→已完成）
 --   4. idc_inspection           巡检记录（温湿度、电源、异常描述、是否处理）
 --   5. idc_energy               能耗记录（抄表读数 → 用电量 → 电费）
+--   6. idc_isolation            机柜停电检修隔离（待生效→隔离中→已解除 / 已取消）
+--      idc_isolation_server     隔离生效瞬间的受影响服务器快照（不可被后续资产变更改写）
+--      idc_isolation_order      隔离冻结的相关施工工单快照（含冲突标记）
+--      idc_isolation_log        隔离操作记录（创建/生效/解除/取消/重试）
 --
 -- 种子数据对照：
 --   [M1] 机柜 U 位数差异        → C03 只有 32U，其余 42U
@@ -23,6 +27,10 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
+DROP TABLE IF EXISTS idc_isolation_log;
+DROP TABLE IF EXISTS idc_isolation_order;
+DROP TABLE IF EXISTS idc_isolation_server;
+DROP TABLE IF EXISTS idc_isolation;
 DROP TABLE IF EXISTS idc_energy;
 DROP TABLE IF EXISTS idc_inspection;
 DROP TABLE IF EXISTS idc_work_order;
@@ -136,6 +144,89 @@ CREATE TABLE idc_energy (
     KEY idx_energy_cabinet (cabinet_id),
     KEY idx_energy_date (meter_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='能耗记录';
+
+-- ============================================================================
+-- 模块六：机柜停电检修隔离
+--   主表状态机：PENDING 待生效 → ISOLATING 隔离中 → RELEASED 已解除；
+--               PENDING 可取消为 CANCELLED 已取消。
+--   机柜维度唯一「隔离中」：由 uk_isolation_active(cabinet_id, active_flag) 兜底，
+--   active_flag 只有隔离中记录为 1，库内生成常量列保证 NULL 不冲突。
+-- ============================================================================
+CREATE TABLE idc_isolation (
+    id              BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_no    VARCHAR(30)  NOT NULL COMMENT '隔离单号',
+    cabinet_id      BIGINT       NOT NULL COMMENT '被隔离机柜',
+    cabinet_code    VARCHAR(20)  NOT NULL COMMENT '机柜编号快照',
+    cabinet_name    VARCHAR(50)           COMMENT '机柜名称快照',
+    room_name       VARCHAR(50)           COMMENT '机房名称快照',
+    plan_start      DATETIME     NOT NULL COMMENT '计划开始时间',
+    plan_end        DATETIME     NOT NULL COMMENT '计划结束时间',
+    reason          VARCHAR(300) NOT NULL COMMENT '检修原因',
+    initiator       VARCHAR(30)  NOT NULL COMMENT '发起人',
+    site_owner      VARCHAR(30)  NOT NULL COMMENT '现场负责人',
+    status          VARCHAR(20)  NOT NULL COMMENT 'PENDING/ISOLATING/RELEASED/CANCELLED',
+    effective_time  DATETIME              COMMENT '实际生效时间',
+    release_time    DATETIME              COMMENT '实际解除时间',
+    release_note    VARCHAR(300)          COMMENT '解除说明（负责人必填）',
+    release_user    VARCHAR(30)           COMMENT '解除操作人',
+    cancel_time     DATETIME              COMMENT '取消时间',
+    cancel_reason   VARCHAR(300)          COMMENT '取消原因',
+    last_fail_reason VARCHAR(500)         COMMENT '最近一次生效失败原因（可再次操作的明确提示）',
+    snapshot_count  INT                   COMMENT '影响服务器台数（快照行数）',
+    active_flag     TINYINT GENERATED ALWAYS AS (CASE WHEN status = 'ISOLATING' THEN 1 ELSE NULL END) VIRTUAL
+                                COMMENT '隔离中=1，其余 NULL：配合唯一索引兜底并发',
+    create_time     DATETIME     NOT NULL COMMENT '创建时间',
+    remark          VARCHAR(200)          COMMENT '备注',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_isolation_no (isolation_no),
+    UNIQUE KEY uk_isolation_active (cabinet_id, active_flag),
+    KEY idx_isolation_cabinet (cabinet_id),
+    KEY idx_isolation_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='机柜停电检修隔离单';
+
+CREATE TABLE idc_isolation_server (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_id     BIGINT       NOT NULL COMMENT '隔离单',
+    server_id        BIGINT                COMMENT '服务器 ID（资产可能后续被删，留痕仍保留）',
+    asset_no         VARCHAR(30)  NOT NULL COMMENT '资产编号快照',
+    brand            VARCHAR(30)           COMMENT '品牌快照',
+    model            VARCHAR(40)           COMMENT '型号快照',
+    start_u          INT                   COMMENT '起始 U 位快照',
+    size_u           INT                   COMMENT '占用 U 数快照',
+    owner_name       VARCHAR(50)           COMMENT '业务归属快照',
+    status           VARCHAR(20)           COMMENT '当时状态快照 ONLINE/REPAIR 等',
+    ip_address       VARCHAR(40)           COMMENT '管理 IP 快照',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_iso_server (isolation_id, server_id),
+    KEY idx_iso_server_iso (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离影响服务器快照（只写一次，永不更新）';
+
+CREATE TABLE idc_isolation_order (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_id     BIGINT       NOT NULL COMMENT '隔离单',
+    order_id         BIGINT       NOT NULL COMMENT '施工工单 ID',
+    order_no         VARCHAR(30)  NOT NULL COMMENT '工单号快照',
+    order_type       VARCHAR(20)           COMMENT '工单类型快照',
+    asset_no         VARCHAR(30)           COMMENT '资产编号快照',
+    cabinet_id       BIGINT                COMMENT '相关机柜（本柜或迁入本柜）',
+    status           VARCHAR(20)  NOT NULL COMMENT '生效当时工单状态快照',
+    conflict_flag    TINYINT      NOT NULL DEFAULT 0 COMMENT '1=施工中硬冲突，阻止生效',
+    relation         VARCHAR(20)           COMMENT 'IN_CAB 本柜施工 / INTO_CAB 迁入本柜',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_iso_order (isolation_id, order_id),
+    KEY idx_iso_order_iso (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离相关施工工单快照与冻结清单';
+
+CREATE TABLE idc_isolation_log (
+    id               BIGINT       NOT NULL AUTO_INCREMENT,
+    isolation_id     BIGINT       NOT NULL COMMENT '隔离单',
+    action           VARCHAR(20)  NOT NULL COMMENT 'CREATE/EFFECT/RELEASE/CANCEL/FAIL',
+    detail           VARCHAR(500)          COMMENT '操作说明 / 失败原因',
+    operator         VARCHAR(30)           COMMENT '操作人',
+    log_time         DATETIME     NOT NULL COMMENT '操作时间',
+    PRIMARY KEY (id),
+    KEY idx_iso_log_iso (isolation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='隔离操作记录';
 
 
 -- ---------------------------- 机房 ----------------------------
@@ -255,6 +346,19 @@ INSERT INTO idc_work_order (id, order_no, order_type, server_id, asset_no, cabin
      '陈锋', '2026-09-05 09:30:00', 'REJECTED', NULL, NULL, NULL, '目标 U 位与散热风道冲突，改期', '驳回后重新排期'),
     (14, 'WO20260911014', 'OFF', 26, 'SRV-0026', 8, 1,
      '周琳', '2026-09-11 16:05:00', 'REJECTED', NULL, NULL, NULL, '边缘网关仍在服务，不允许下架', '业务方不同意');
+
+-- ---------------------------- 机柜停电检修隔离（种子：一条待生效） ----------------------------
+-- 机柜 9（C03）正有 PDU B 路异常未闭环（见巡检第 11 条），计划停电更换空开。
+-- 注意：该柜没有施工中工单（WO20260818004 已完成），可正常生效；
+-- 机柜 11 有一条 WORKING 工单（WO20260901006），对 11 号柜发起隔离会被硬冲突拦下，可现场演示。
+INSERT INTO idc_isolation (id, isolation_no, cabinet_id, cabinet_code, cabinet_name, room_name,
+                           plan_start, plan_end, reason, initiator, site_owner, status,
+                           effective_time, release_time, release_note, release_user,
+                           cancel_time, cancel_reason, last_fail_reason, snapshot_count, create_time, remark) VALUES
+    (1, 'ISO20260926001', 9, 'C03', 'C 区 03 号柜', '边缘机房 C',
+     '2026-09-28 09:00:00', '2026-09-28 12:00:00', 'PDU B 路空开跳闸隐患，停电更换 B 路空开并紧固母排',
+     '王强', '孙浩', 'PENDING',
+     NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, '2026-09-26 15:30:00', '检修前需通知边缘缓存业务方');
 
 -- ---------------------------- 巡检记录 ----------------------------
 INSERT INTO idc_inspection (id, cabinet_id, inspector, inspect_time, temperature, humidity,

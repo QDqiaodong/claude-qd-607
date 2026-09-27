@@ -70,6 +70,17 @@ export const energyApi = {
   create: (data) => http.post('/energy', data)
 }
 
+/** 模块六：机柜停电检修隔离 */
+export const isolationApi = {
+  list: (params) => http.get('/isolations', { params }),
+  get: (id) => http.get(`/isolations/${id}`),
+  create: (data) => http.post('/isolations', data),
+  effect: (id, operator) => http.post(`/isolations/${id}/effect`, { operator }),
+  release: (id, note, operator) => http.post(`/isolations/${id}/release`, { note, operator }),
+  cancel: (id, reason, operator) => http.post(`/isolations/${id}/cancel`, { reason, operator }),
+  activeOfCabinet: (cabinetId) => http.get(`/cabinets/${cabinetId}/active-isolation`)
+}
+
 /** 状态 → 中文名 */
 export const SERVER_STATUS = {
   ONLINE: '在架',
@@ -90,6 +101,13 @@ export const ORDER_STATUS = {
 
 export const POWER_STATUS = { NORMAL: '正常', ABNORMAL: '异常' }
 
+export const ISOLATION_STATUS = {
+  PENDING: '待生效',
+  ISOLATING: '隔离中',
+  RELEASED: '已解除',
+  CANCELLED: '已取消'
+}
+
 /** 状态标签类型（Element Plus tag） */
 export const statusTagType = (status) =>
   ({
@@ -103,7 +121,10 @@ export const statusTagType = (status) =>
     DONE: 'success',
     REJECTED: 'danger',
     NORMAL: 'success',
-    ABNORMAL: 'danger'
+    ABNORMAL: 'danger',
+    ISOLATING: 'danger',
+    RELEASED: 'success',
+    CANCELLED: 'info'
   })[status] || 'info'
 
 /** 后端 LocalDateTime 出来是 "2026-09-21T09:10:00"，页面上显示到分钟 */

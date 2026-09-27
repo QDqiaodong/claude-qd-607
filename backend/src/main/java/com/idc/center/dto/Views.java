@@ -92,6 +92,8 @@ public final class Views {
         private Integer usedU;
         private Integer freeU;
         private List<RackSlot> slots;
+        /** 该机柜正在隔离时的徽章（无则字段为 null） */
+        private ActiveIsolationBanner activeIsolation;
     }
 
     /** 机柜 + 机房名（列表 / 下拉框用） */
@@ -108,6 +110,10 @@ public final class Views {
         private BigDecimal ratedPower;
         private Integer usedU;
         private String remark;
+        /** 该机柜是否正在停电检修隔离（机柜树/列表挂徽章用） */
+        private boolean isolating;
+        private String isolationNo;
+        private String isolationReason;
 
         public static CabinetView of(Cabinet cabinet, String roomName, Integer usedU) {
             CabinetView view = new CabinetView();
@@ -170,5 +176,83 @@ public final class Views {
             result.setSize(size);
             return result;
         }
+    }
+
+    // ============================ 模块六：机柜停电检修隔离 ============================
+
+    /** 隔离服务器快照行：快照字段不可变，current* 字段为实时查询结果，仅用于展示差异 */
+    @Data
+    public static class IsolationServerView {
+        /** 快照部分（生效当时固定，永不被资产变更改写） */
+        private Long serverId;
+        private String assetNo;
+        private String brand;
+        private String model;
+        private Integer startU;
+        private Integer sizeU;
+        private String ownerName;
+        private String status;
+        private String ipAddress;
+
+        /** 当前实况：null 表示这台资产已查不到（删除/下架消失） */
+        private Integer currentStartU;
+        private Integer currentSizeU;
+        private String currentOwnerName;
+        private String currentStatus;
+        private Long currentCabinetId;
+        private boolean currentMissing;
+
+        /** SAME 一致 / CHANGED 与快照有差异 / REMOVED 已不在该机柜或已删除 */
+        private String diffState;
+        private List<String> diffs;
+    }
+
+    /** 隔离相关施工行：冻结当时快照 + 当前状态，差异用于提示，是否冻结以后端实时判定为准 */
+    @Data
+    public static class IsolationOrderView {
+        private Long orderId;
+        private String orderNo;
+        private String orderType;
+        private String assetNo;
+        private Long cabinetId;
+        /** 生效当时状态快照 */
+        private String status;
+        private Integer conflictFlag;
+        private String relation;
+
+        /** 当前工单状态（实时），null 表示工单已不存在 */
+        private String currentStatus;
+        private boolean currentMissing;
+        /** 后端按当前隔离状态 + 工单状态实时计算：此刻推进是否会被拦 */
+        private boolean frozenNow;
+        private String frozenReason;
+    }
+
+    /** 隔离详情：计划信息 / 快照 / 当前差异 / 冲突施工 / 操作记录五块分清 */
+    @Data
+    public static class IsolationDetail {
+        private com.idc.center.domain.Isolation isolation;
+        private List<IsolationServerView> servers;
+        private List<IsolationOrderView> orders;
+        private List<com.idc.center.domain.IsolationLog> logs;
+        /** 快照是否已生成（待生效且从未成功生效时为 false） */
+        private boolean snapshotReady;
+        /** 实时预检结果：当前再点生效会不会过（待生效记录页用来提示） */
+        private String preflightMessage;
+        private boolean preflightBlocked;
+    }
+
+    /** 机柜/工单页面上挂的「正在隔离」小徽章数据 */
+    @Data
+    public static class ActiveIsolationBanner {
+        private Long isolationId;
+        private String isolationNo;
+        private Long cabinetId;
+        private String cabinetCode;
+        private String reason;
+        private String siteOwner;
+        private java.time.LocalDateTime planStart;
+        private java.time.LocalDateTime planEnd;
+        private java.time.LocalDateTime effectiveTime;
     }
 }

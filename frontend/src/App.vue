@@ -24,7 +24,10 @@
             <i class="nav-dot" :class="'dot-' + (data.type === 'room' ? 'room' : 'cab')" />
             <span class="nav-label">{{ data.label }}</span>
             <em v-if="data.type === 'room'" class="nav-count">{{ data.children.length }}</em>
-            <em v-else class="nav-u">{{ data.usedU }}/{{ data.totalU }}U</em>
+            <template v-else>
+              <i v-if="data.isolating" class="nav-iso" title="该机柜正在停电检修隔离">隔</i>
+              <em class="nav-u">{{ data.usedU }}/{{ data.totalU }}U</em>
+            </template>
           </span>
         </template>
       </el-tree>
@@ -107,7 +110,9 @@ const treeData = computed(() =>
         id: cabinet.id,
         label: `${cabinet.code} · ${cabinet.name}`,
         usedU: cabinet.usedU,
-        totalU: cabinet.totalU
+        totalU: cabinet.totalU,
+        isolating: cabinet.isolating,
+        isolationNo: cabinet.isolationNo
       }))
   }))
 )
@@ -284,6 +289,17 @@ async function loadTree() {
 
 .dot-cab {
   background: #b0bec5;
+}
+
+.nav-iso {
+  font-style: normal;
+  font-size: 10px;
+  line-height: 1;
+  color: #fff;
+  background: #c62828;
+  border-radius: 3px;
+  padding: 2px 4px;
+  margin-left: 2px;
 }
 
 /* 运维业务按钮 */

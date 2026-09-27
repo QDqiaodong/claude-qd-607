@@ -1,5 +1,6 @@
 package com.idc.center.repository;
 
+import java.util.Collection;
 import java.util.List;
 
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -16,4 +17,7 @@ public interface WorkOrderRepository extends JpaRepository<WorkOrder, Long> {
     List<WorkOrder> findByServerIdOrderByIdDesc(Long serverId);
 
     boolean existsByOrderNo(String orderNo);
+
+    /** 与某机柜相关、且仍会推进的工单：目标机柜是它（上架/迁入），或下架/迁出它（server 当前在该柜） */
+    List<WorkOrder> findByCabinetIdAndStatusIn(Long cabinetId, Collection<String> statuses);
 }

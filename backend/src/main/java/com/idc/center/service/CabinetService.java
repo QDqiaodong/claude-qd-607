@@ -10,11 +10,13 @@ import org.springframework.stereotype.Service;
 
 import com.idc.center.common.BizException;
 import com.idc.center.domain.Cabinet;
+import com.idc.center.domain.Isolation;
 import com.idc.center.domain.Room;
 import com.idc.center.domain.ServerAsset;
 import com.idc.center.dto.Dtos;
 import com.idc.center.dto.Views;
 import com.idc.center.repository.CabinetRepository;
+import com.idc.center.repository.IsolationRepository;
 import com.idc.center.repository.RoomRepository;
 import com.idc.center.repository.ServerAssetRepository;
 
@@ -27,13 +29,16 @@ public class CabinetService {
     private final RoomRepository roomRepository;
     private final CabinetRepository cabinetRepository;
     private final ServerAssetRepository serverRepository;
+    private final IsolationRepository isolationRepository;
 
     public CabinetService(RoomRepository roomRepository,
                           CabinetRepository cabinetRepository,
-                          ServerAssetRepository serverRepository) {
+                          ServerAssetRepository serverRepository,
+                          IsolationRepository isolationRepository) {
         this.roomRepository = roomRepository;
         this.cabinetRepository = cabinetRepository;
         this.serverRepository = serverRepository;
+        this.isolationRepository = isolationRepository;
     }
 
     public List<Room> listRooms() {
@@ -55,7 +60,7 @@ public class CabinetService {
         return roomRepository.save(room);
     }
 
-    /** 机柜列表：带机房名与已用 U 数，左侧树和下拉框都用它 */
+    /** 机柜列表：带机房名、已用 U 数与正在隔离标记，左侧树和下拉框都用它 */
     public List<Views.CabinetView> listCabinets(Long roomId) {
         List<Cabinet> cabinets = roomId == null
                 ? cabinetRepository.findAll(Sort.by("code"))
@@ -64,9 +69,23 @@ public class CabinetService {
         for (Room room : roomRepository.findAll()) {
             roomNames.put(room.getId(), room.getName());
         }
+        // 一次捞出全部「隔离中」记录，给机柜视图挂徽章（不分条查）
+        Map<Long, Isolation> activeMap = new HashMap<>();
+        for (Isolation isolation : isolationRepository.findByStatusIn(
+                List.of("ISOLATING"), Sort.unsorted())) {
+            activeMap.put(isolation.getCabinetId(), isolation);
+        }
         List<Views.CabinetView> views = new ArrayList<>();
         for (Cabinet cabinet : cabinets) {
-            views.add(Views.CabinetView.of(cabinet, roomNames.get(cabinet.getRoomId()), usedU(cabinet.getId())));
+            Views.CabinetView view = Views.CabinetView.of(cabinet,
+                    roomNames.get(cabinet.getRoomId()), usedU(cabinet.getId()));
+            Isolation active = activeMap.get(cabinet.getId());
+            if (active != null) {
+                view.setIsolating(true);
+                view.setIsolationNo(active.getIsolationNo());
+                view.setIsolationReason(active.getReason());
+            }
+            views.add(view);
         }
         return views;
     }
@@ -131,6 +150,19 @@ public class CabinetService {
         view.setUsedU(usedU(cabinet.getId(), servers));
         view.setFreeU(totalU - view.getUsedU());
         view.setSlots(slots);
+        isolationRepository.findByCabinetIdAndStatus(cabinetId, "ISOLATING").ifPresent(isolation -> {
+            Views.ActiveIsolationBanner banner = new Views.ActiveIsolationBanner();
+            banner.setIsolationId(isolation.getId());
+            banner.setIsolationNo(isolation.getIsolationNo());
+            banner.setCabinetId(isolation.getCabinetId());
+            banner.setCabinetCode(isolation.getCabinetCode());
+            banner.setReason(isolation.getReason());
+            banner.setSiteOwner(isolation.getSiteOwner());
+            banner.setPlanStart(isolation.getPlanStart());
+            banner.setPlanEnd(isolation.getPlanEnd());
+            banner.setEffectiveTime(isolation.getEffectiveTime());
+            view.setActiveIsolation(banner);
+        });
         return view;
     }
 
